@@ -226,9 +226,9 @@ const (
 	AccountAutoUpdateAlwaysDisabled Activity = 117
 
 	// AccountMetricsPushEnabled indicates that a user enabled metrics push for the account
-	AccountMetricsPushEnabled Activity = 121
+	AccountMetricsPushEnabled Activity = 126
 	// AccountMetricsPushDisabled indicates that a user disabled metrics push for the account
-	AccountMetricsPushDisabled Activity = 122
+	AccountMetricsPushDisabled Activity = 127
 
 	// DomainAdded indicates that a user added a custom domain
 	DomainAdded Activity = 118
@@ -236,6 +236,19 @@ const (
 	DomainDeleted Activity = 119
 	// DomainValidated indicates that a custom domain was validated
 	DomainValidated Activity = 120
+	// AccountIPv6Enabled indicates that a user enabled IPv6 overlay for the account
+	AccountIPv6Enabled Activity = 121
+	// AccountIPv6Disabled indicates that a user disabled IPv6 overlay for the account
+	AccountIPv6Disabled Activity = 122
+
+	// AccountLocalMfaEnabled indicates that a user enabled TOTP MFA for local users
+	AccountLocalMfaEnabled Activity = 123
+	// AccountLocalMfaDisabled indicates that a user disabled TOTP MFA for local users
+	AccountLocalMfaDisabled Activity = 124
+	// UserExtendedPeerSession indicates that a user refreshed their peer's
+	// SSO session deadline via ExtendAuthSession without re-establishing the
+	// tunnel. Distinct from UserLoggedInPeer (full interactive login).
+	UserExtendedPeerSession Activity = 125
 
 	AccountDeleted Activity = 99999
 )
@@ -352,6 +365,9 @@ var activityMap = map[Activity]Code{
 	AccountAutoUpdateAlwaysEnabled:  {"Account auto-update always enabled", "account.setting.auto.update.always.enable"},
 	AccountAutoUpdateAlwaysDisabled: {"Account auto-update always disabled", "account.setting.auto.update.always.disable"},
 
+	AccountIPv6Enabled:  {"Account IPv6 overlay enabled", "account.setting.ipv6.enable"},
+	AccountIPv6Disabled: {"Account IPv6 overlay disabled", "account.setting.ipv6.disable"},
+
 	IdentityProviderCreated: {"Identity provider created", "identityprovider.create"},
 	IdentityProviderUpdated: {"Identity provider updated", "identityprovider.update"},
 	IdentityProviderDeleted: {"Identity provider deleted", "identityprovider.delete"},
@@ -386,6 +402,11 @@ var activityMap = map[Activity]Code{
 
 	AccountMetricsPushEnabled:  {"Account metrics push enabled", "account.setting.metrics.push.enable"},
 	AccountMetricsPushDisabled: {"Account metrics push disabled", "account.setting.metrics.push.disable"},
+
+	AccountLocalMfaEnabled:  {"Account local MFA enabled", "account.setting.local.mfa.enable"},
+	AccountLocalMfaDisabled: {"Account local MFA disabled", "account.setting.local.mfa.disable"},
+
+	UserExtendedPeerSession: {"User extended peer session", "user.peer.session.extend"},
 
 	DomainAdded:     {"Domain added", "domain.add"},
 	DomainDeleted:   {"Domain deleted", "domain.delete"},

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"strings"
@@ -14,9 +15,12 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	log "github.com/sirupsen/logrus"
+
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	"google.golang.org/grpc/codes"
 	gstatus "google.golang.org/grpc/status"
+
+	"github.com/netbirdio/netbird/client/iface/wgaddr"
 
 	"github.com/netbirdio/netbird/client/iface"
 	"github.com/netbirdio/netbird/client/iface/device"
@@ -94,6 +98,7 @@ func (c *ConnectClient) RunOnAndroid(
 	dnsAddresses []netip.AddrPort,
 	dnsReadyListener dns.ReadyListener,
 	stateFilePath string,
+	cacheDir string,
 ) error {
 	// in case of non Android os these variables will be nil
 	mobileDependency := MobileDependency{
@@ -103,6 +108,7 @@ func (c *ConnectClient) RunOnAndroid(
 		HostDNSAddresses:      dnsAddresses,
 		DnsReadyListener:      dnsReadyListener,
 		StateFilePath:         stateFilePath,
+		TempDir:               cacheDir,
 	}
 	return c.run(mobileDependency, nil, "")
 }
@@ -111,8 +117,9 @@ func (c *ConnectClient) RunOniOS(
 	fileDescriptor int32,
 	networkChangeListener listener.NetworkChangeListener,
 	dnsManager dns.IosDnsManager,
-	dnsAddresses []netip.AddrPort,
 	stateFilePath string,
+	cacheDir string,
+	logFilePath string,
 ) error {
 	// Set GC percent to 5% to reduce memory usage as iOS only allows 50MB of memory for the extension.
 	debug.SetGCPercent(5)
@@ -121,10 +128,10 @@ func (c *ConnectClient) RunOniOS(
 		FileDescriptor:        fileDescriptor,
 		NetworkChangeListener: networkChangeListener,
 		DnsManager:            dnsManager,
-		HostDNSAddresses:      dnsAddresses,
 		StateFilePath:         stateFilePath,
+		TempDir:               cacheDir,
 	}
-	return c.run(mobileDependency, nil, "")
+	return c.run(mobileDependency, nil, logFilePath)
 }
 
 func (c *ConnectClient) run(mobileDependency MobileDependency, runningChan chan struct{}, logPath string) error {
@@ -335,12 +342,22 @@ func (c *ConnectClient) run(mobileDependency MobileDependency, runningChan chan 
 		c.statusRecorder.MarkSignalConnected()
 
 		relayURLs, token := parseRelayInfo(loginResp)
+		if override, ok := peer.OverrideRelayURLs(); ok {
+			log.Infof("overriding relay URLs from %s: %v", peer.EnvKeyNBHomeRelayServers, override)
+			relayURLs = override
+		}
 		peerConfig := loginResp.GetPeerConfig()
 
 		engineConfig, err := createEngineConfig(myPrivateKey, c.config, peerConfig, logPath)
 		if err != nil {
 			log.Error(err)
 			return wrapErr(err)
+		}
+		engineConfig.TempDir = mobileDependency.TempDir
+		// Leave StateDir empty when there is no state path so a disk-backed
+		// syncstore falls back to os.TempDir() instead of filepath.Dir("") == ".".
+		if path != "" {
+			engineConfig.StateDir = filepath.Dir(path)
 		}
 
 		relayManager := relayClient.NewManager(engineCtx, relayURLs, myPrivateKey.PublicKey().String(), engineConfig.MTU)
@@ -533,9 +550,20 @@ func createEngineConfig(key wgtypes.Key, config *profilemanager.Config, peerConf
 	if config.NetworkMonitor != nil {
 		nm = *config.NetworkMonitor
 	}
+	wgAddr, err := wgaddr.ParseWGAddress(peerConfig.Address)
+	if err != nil {
+		return nil, fmt.Errorf("parse overlay address %q: %w", peerConfig.Address, err)
+	}
+
+	if !config.DisableIPv6 {
+		if err := wgAddr.SetIPv6FromCompact(peerConfig.GetAddressV6()); err != nil {
+			log.Warn(err)
+		}
+	}
+
 	engineConf := &EngineConfig{
 		WgIfaceName:                   config.WgIface,
-		WgAddr:                        peerConfig.Address,
+		WgAddr:                        wgAddr,
 		IFaceBlackList:                config.IFaceBlackList,
 		DisableIPv6Discovery:          config.DisableIPv6Discovery,
 		WgPrivateKey:                  key,
@@ -560,6 +588,7 @@ func createEngineConfig(key wgtypes.Key, config *profilemanager.Config, peerConf
 		DisableFirewall:     config.DisableFirewall,
 		BlockLANAccess:      config.BlockLANAccess,
 		BlockInbound:        config.BlockInbound,
+		DisableIPv6:         config.DisableIPv6,
 
 		LazyConnectionEnabled: config.LazyConnectionEnabled,
 
@@ -634,6 +663,7 @@ func loginToManagement(ctx context.Context, client mgm.Client, pubSSHKey []byte,
 		config.DisableFirewall,
 		config.BlockLANAccess,
 		config.BlockInbound,
+		config.DisableIPv6,
 		config.LazyConnectionEnabled,
 		config.EnableSSHRoot,
 		config.EnableSSHSFTP,

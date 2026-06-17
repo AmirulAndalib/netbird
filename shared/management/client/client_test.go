@@ -17,8 +17,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/netbirdio/management-integrations/integrations"
 	ephemeral_manager "github.com/netbirdio/netbird/management/internals/modules/peers/ephemeral/manager"
+	"github.com/netbirdio/netbird/management/server/integrations/integrated_validator/validator"
 
 	"github.com/netbirdio/netbird/management/internals/controllers/network_map/controller"
 	"github.com/netbirdio/netbird/management/internals/controllers/network_map/update_channel"
@@ -31,6 +31,7 @@ import (
 	"github.com/netbirdio/netbird/management/internals/server/config"
 	mgmt "github.com/netbirdio/netbird/management/server"
 	"github.com/netbirdio/netbird/management/server/activity"
+	nbcache "github.com/netbirdio/netbird/management/server/cache"
 	"github.com/netbirdio/netbird/management/server/groups"
 	"github.com/netbirdio/netbird/management/server/integrations/port_forwarding"
 	"github.com/netbirdio/netbird/management/server/mock_server"
@@ -88,16 +89,23 @@ func startManagement(t *testing.T) (*grpc.Server, net.Listener) {
 			gomock.Any(),
 			gomock.Any(),
 		).
-		Return(true, nil).
+		Return(true, context.Background(), nil).
 		AnyTimes()
 
 	peersManger := peers.NewManager(store, permissionsManagerMock)
 	settingsManagerMock := settings.NewMockManager(ctrl)
 	jobManager := job.NewJobManager(nil, store, peersManger)
 
-	ia, _ := integrations.NewIntegratedValidator(context.Background(), peersManger, settingsManagerMock, eventStore)
+	ctx := context.Background()
 
-	metrics, err := telemetry.NewDefaultAppMetrics(context.Background())
+	cacheStore, err := nbcache.NewStore(ctx, 100*time.Millisecond, 300*time.Millisecond, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ia, _ := validator.NewIntegratedValidator(ctx, peersManger, settingsManagerMock, eventStore, cacheStore)
+
+	metrics, err := telemetry.NewDefaultAppMetrics(ctx)
 	require.NoError(t, err)
 
 	settingsMockManager := settings.NewMockManager(ctrl)
@@ -116,11 +124,10 @@ func startManagement(t *testing.T) (*grpc.Server, net.Listener) {
 		Return(&types.ExtraSettings{}, nil).
 		AnyTimes()
 
-	ctx := context.Background()
 	updateManager := update_channel.NewPeersUpdateManager(metrics)
 	requestBuffer := mgmt.NewAccountRequestBuffer(ctx, store)
 	networkMapController := controller.NewController(ctx, store, metrics, updateManager, requestBuffer, mgmt.MockIntegratedValidator{}, settingsMockManager, "netbird.selfhosted", port_forwarding.NewControllerMock(), ephemeral_manager.NewEphemeralManager(store, peersManger), config)
-	accountManager, err := mgmt.BuildManager(context.Background(), config, store, networkMapController, jobManager, nil, "", eventStore, nil, false, ia, metrics, port_forwarding.NewControllerMock(), settingsMockManager, permissionsManagerMock, false)
+	accountManager, err := mgmt.BuildManager(context.Background(), config, store, networkMapController, jobManager, nil, "", eventStore, nil, false, ia, metrics, port_forwarding.NewControllerMock(), settingsMockManager, permissionsManagerMock, false, cacheStore)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +138,7 @@ func startManagement(t *testing.T) (*grpc.Server, net.Listener) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mgmtServer, err := nbgrpc.NewServer(config, accountManager, settingsMockManager, jobManager, secretsManager, nil, nil, mgmt.MockIntegratedValidator{}, networkMapController, nil)
+	mgmtServer, err := nbgrpc.NewServer(config, accountManager, settingsMockManager, jobManager, secretsManager, nil, nil, mgmt.MockIntegratedValidator{}, networkMapController, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,15 +322,21 @@ func TestClient_Sync(t *testing.T) {
 		if resp.GetNetbirdConfig() == nil {
 			t.Error("expecting non nil NetbirdConfig got nil")
 		}
-		if len(resp.GetRemotePeers()) != 1 {
-			t.Errorf("expecting RemotePeers size %d got %d", 1, len(resp.GetRemotePeers()))
+		// we test network map peers from 0.29.3 and dev builds
+		if len(resp.GetRemotePeers()) != 0 {
+			t.Error("expecting top-level RemotePeers to be empty for v0.29.3+ clients")
+		}
+		networkMap := resp.GetNetworkMap()
+		if len(networkMap.GetRemotePeers()) != 1 {
+			t.Errorf("expecting RemotePeers size %d got %d", 1, len(networkMap.GetRemotePeers()))
 			return
 		}
-		if resp.GetRemotePeersIsEmpty() == true {
+
+		if networkMap.GetRemotePeersIsEmpty() {
 			t.Error("expecting RemotePeers property to be false, got true")
 		}
-		if resp.GetRemotePeers()[0].GetWgPubKey() != remoteKey.PublicKey().String() {
-			t.Errorf("expecting RemotePeer public key %s got %s", remoteKey.PublicKey().String(), resp.GetRemotePeers()[0].GetWgPubKey())
+		if networkMap.GetRemotePeers()[0].GetWgPubKey() != remoteKey.PublicKey().String() {
+			t.Errorf("expecting RemotePeer public key %s got %s", remoteKey.PublicKey().String(), networkMap.GetRemotePeers()[0].GetWgPubKey())
 		}
 	case <-time.After(3 * time.Second):
 		t.Error("timeout waiting for test to finish")

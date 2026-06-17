@@ -22,6 +22,7 @@ import (
 	nbproxy "github.com/netbirdio/netbird/management/internals/modules/reverseproxy/proxy"
 	"github.com/netbirdio/netbird/management/internals/modules/reverseproxy/service"
 	nbgrpc "github.com/netbirdio/netbird/management/internals/shared/grpc"
+	nbcache "github.com/netbirdio/netbird/management/server/cache"
 	"github.com/netbirdio/netbird/management/server/store"
 	"github.com/netbirdio/netbird/management/server/types"
 	"github.com/netbirdio/netbird/management/server/users"
@@ -191,11 +192,11 @@ func setupAuthCallbackTest(t *testing.T) *testSetup {
 
 	oidcServer := newFakeOIDCServer()
 
-	tokenStore, err := nbgrpc.NewOneTimeTokenStore(ctx, time.Minute, 10*time.Minute, 100)
+	cacheStore, err := nbcache.NewStore(ctx, 30*time.Minute, 10*time.Minute, 100)
 	require.NoError(t, err)
 
-	pkceStore, err := nbgrpc.NewPKCEVerifierStore(ctx, 10*time.Minute, 10*time.Minute, 100)
-	require.NoError(t, err)
+	tokenStore := nbgrpc.NewOneTimeTokenStore(ctx, cacheStore)
+	pkceStore := nbgrpc.NewPKCEVerifierStore(ctx, cacheStore)
 
 	usersManager := users.NewManager(testStore)
 
@@ -214,6 +215,7 @@ func setupAuthCallbackTest(t *testing.T) *testSetup {
 		oidcConfig,
 		nil,
 		usersManager,
+		nil,
 		nil,
 	)
 
@@ -388,6 +390,10 @@ func (m *testServiceManager) DeleteService(_ context.Context, _, _, _ string) er
 	return nil
 }
 
+func (m *testServiceManager) DeleteAccountCluster(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
 func (m *testServiceManager) SetCertificateIssuedAt(_ context.Context, _, _ string) error {
 	return nil
 }
@@ -434,7 +440,11 @@ func (m *testServiceManager) StopServiceFromPeer(_ context.Context, _, _, _ stri
 
 func (m *testServiceManager) StartExposeReaper(_ context.Context) {}
 
-func (m *testServiceManager) GetActiveClusters(_ context.Context, _, _ string) ([]nbproxy.Cluster, error) {
+func (m *testServiceManager) GetServiceByDomain(ctx context.Context, domain string) (*service.Service, error) {
+	return m.store.GetServiceByDomain(ctx, domain)
+}
+
+func (m *testServiceManager) GetClusters(_ context.Context, _, _ string) ([]nbproxy.Cluster, error) {
 	return nil, nil
 }
 

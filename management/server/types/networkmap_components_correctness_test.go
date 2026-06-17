@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
 	"testing"
 	"time"
 
@@ -42,7 +43,7 @@ func buildScalableTestAccount(numPeers, numGroups int, withDefaultPolicy bool) (
 
 	for i := range numPeers {
 		peerID := fmt.Sprintf("peer-%d", i)
-		ip := net.IP{100, byte(64 + i/65536), byte((i / 256) % 256), byte(i % 256)}
+		ip := netip.AddrFrom4([4]byte{100, byte(64 + i/65536), byte((i / 256) % 256), byte(i % 256)})
 		wtVersion := "0.25.0"
 		if i%2 == 0 {
 			wtVersion = "0.40.0"
@@ -1029,6 +1030,48 @@ func TestComponents_RouteDefaultPermit(t *testing.T) {
 	assert.True(t, hasDefaultPermit, "route without ACG should have default permit rule with 0.0.0.0/0 source")
 }
 
+// TestComponents_ExitNodeDefaultPermitIPv6 verifies that a default exit node route
+// (0.0.0.0/0) without AccessControlGroups also emits an IPv6 default permit rule
+// (::/0 source and destination) for peers that support IPv6, mirroring the route
+// the client installs. Without it, IPv6 traffic is routed to the exit node but
+// dropped at the forward chain.
+func TestComponents_ExitNodeDefaultPermitIPv6(t *testing.T) {
+	account, validatedPeers := scalableTestAccount(20, 2)
+
+	routingPeerID := "peer-5"
+	routingPeer := account.Peers[routingPeerID]
+	routingPeer.IPv6 = netip.MustParseAddr("fd00::5")
+	routingPeer.Meta.Capabilities = append(routingPeer.Meta.Capabilities, nbpeer.PeerCapabilityIPv6Overlay)
+
+	account.Routes["route-exit"] = &route.Route{
+		ID: "route-exit", Network: netip.MustParsePrefix("0.0.0.0/0"),
+		PeerID: routingPeerID, Peer: routingPeer.Key,
+		Enabled: true, Groups: []string{"group-all"}, PeerGroups: []string{"group-0"},
+		AccessControlGroups: []string{},
+		AccountID:           "test-account",
+	}
+
+	nm := componentsNetworkMap(account, routingPeerID, validatedPeers)
+	require.NotNil(t, nm)
+
+	hasV4 := false
+	hasV6 := false
+	for _, rfr := range nm.RoutesFirewallRules {
+		switch rfr.Destination {
+		case "0.0.0.0/0":
+			if slices.Contains(rfr.SourceRanges, "0.0.0.0/0") {
+				hasV4 = true
+			}
+		case "::/0":
+			if slices.Contains(rfr.SourceRanges, "::/0") {
+				hasV6 = true
+			}
+		}
+	}
+	assert.True(t, hasV4, "exit node route should have an IPv4 default permit rule (0.0.0.0/0)")
+	assert.True(t, hasV6, "exit node route should have an IPv6 default permit rule (::/0)")
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // 15. MULTIPLE ROUTERS PER NETWORK
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1083,7 +1126,7 @@ func TestComponents_PeerIsNameserverExcludedFromNSGroup(t *testing.T) {
 	nsIP := account.Peers["peer-0"].IP
 	account.NameServerGroups["ns-self"] = &nbdns.NameServerGroup{
 		ID: "ns-self", Name: "Self NS", Enabled: true, Groups: []string{"group-all"},
-		NameServers: []nbdns.NameServer{{IP: netip.AddrFrom4([4]byte{nsIP[0], nsIP[1], nsIP[2], nsIP[3]}), NSType: nbdns.UDPNameServerType, Port: 53}},
+		NameServers: []nbdns.NameServer{{IP: nsIP, NSType: nbdns.UDPNameServerType, Port: 53}},
 	}
 
 	nm := componentsNetworkMap(account, "peer-0", validatedPeers)

@@ -13,6 +13,7 @@ import (
 
 	nbdns "github.com/netbirdio/netbird/dns"
 	"github.com/netbirdio/netbird/management/server/activity"
+	"github.com/netbirdio/netbird/management/server/affectedpeers"
 	nbcache "github.com/netbirdio/netbird/management/server/cache"
 	"github.com/netbirdio/netbird/management/server/idp"
 	nbpeer "github.com/netbirdio/netbird/management/server/peer"
@@ -61,10 +62,12 @@ type Manager interface {
 	GetUserFromUserAuth(ctx context.Context, userAuth auth.UserAuth) (*types.User, error)
 	ListUsers(ctx context.Context, accountID string) ([]*types.User, error)
 	GetPeers(ctx context.Context, accountID, userID, nameFilter, ipFilter string) ([]*nbpeer.Peer, error)
-	MarkPeerConnected(ctx context.Context, peerKey string, connected bool, realIP net.IP, accountID string, syncTime time.Time) error
+	MarkPeerConnected(ctx context.Context, peerKey string, realIP net.IP, accountID string, sessionStartedAt int64, nmap *types.NetworkMap) error
+	MarkPeerDisconnected(ctx context.Context, peerKey string, accountID string, sessionStartedAt int64) error
 	DeletePeer(ctx context.Context, accountID, peerID, userID string) error
 	UpdatePeer(ctx context.Context, accountID, userID string, p *nbpeer.Peer) (*nbpeer.Peer, error)
 	UpdatePeerIP(ctx context.Context, accountID, userID, peerID string, newIP netip.Addr) error
+	UpdatePeerIPv6(ctx context.Context, accountID, userID, peerID string, newIPv6 netip.Addr) error
 	GetNetworkMap(ctx context.Context, peerID string) (*types.NetworkMap, error)
 	GetPeerNetwork(ctx context.Context, peerID string) (*types.Network, error)
 	AddPeer(ctx context.Context, accountID, setupKey, userID string, p *nbpeer.Peer, temporary bool) (*nbpeer.Peer, *types.NetworkMap, []*posture.Checks, error)
@@ -107,6 +110,7 @@ type Manager interface {
 	UpdateAccountSettings(ctx context.Context, accountID, userID string, newSettings *types.Settings) (*types.Settings, error)
 	UpdateAccountOnboarding(ctx context.Context, accountID, userID string, newOnboarding *types.AccountOnboarding) (*types.AccountOnboarding, error)
 	LoginPeer(ctx context.Context, login types.PeerLogin) (*nbpeer.Peer, *types.NetworkMap, []*posture.Checks, error)                       // used by peer gRPC API
+	ExtendPeerSession(ctx context.Context, peerPubKey, userID string) (time.Time, error)                                                    // used by peer gRPC API for ExtendAuthSession
 	SyncPeer(ctx context.Context, sync types.PeerSync, accountID string) (*nbpeer.Peer, *types.NetworkMap, []*posture.Checks, int64, error) // used by peer gRPC API
 	GetExternalCacheManager() ExternalCacheManager
 	GetPostureChecks(ctx context.Context, accountID, postureChecksID, userID string) (*posture.Checks, error)
@@ -124,8 +128,9 @@ type Manager interface {
 	GetAccountIDForPeerKey(ctx context.Context, peerKey string) (string, error)
 	GetAccountSettings(ctx context.Context, accountID string, userID string) (*types.Settings, error)
 	DeleteSetupKey(ctx context.Context, accountID, userID, keyID string) error
-	UpdateAccountPeers(ctx context.Context, accountID string)
-	BufferUpdateAccountPeers(ctx context.Context, accountID string)
+	UpdateAccountPeers(ctx context.Context, accountID string, reason types.UpdateReason)
+	ExpandAndUpdateAffected(ctx context.Context, accountID string, snap *affectedpeers.Snapshot, change affectedpeers.Change)
+	BufferUpdateAccountPeers(ctx context.Context, accountID string, reason types.UpdateReason)
 	BuildUserInfosForAccount(ctx context.Context, accountID, initiatorUserID string, accountUsers []*types.User) (map[string]*types.UserInfo, error)
 	SyncUserJWTGroups(ctx context.Context, userAuth auth.UserAuth) error
 	GetStore() store.Store

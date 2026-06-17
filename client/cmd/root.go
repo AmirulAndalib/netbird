@@ -75,6 +75,8 @@ var (
 	mtu                     uint16
 	profilesDisabled        bool
 	updateSettingsDisabled  bool
+	captureEnabled          bool
+	networksDisabled        bool
 
 	rootCmd = &cobra.Command{
 		Use:          "netbird",
@@ -93,7 +95,9 @@ var (
 	}
 )
 
-// Execute executes the root command.
+// Execute runs the appropriate Cobra command for the CLI.
+// If the process is the update binary it delegates to updateCmd; otherwise it runs the root command.
+// It returns any error produced during command execution.
 func Execute() error {
 	if isUpdateBinary() {
 		return updateCmd.Execute()
@@ -101,6 +105,16 @@ func Execute() error {
 	return rootCmd.Execute()
 }
 
+// init initialises package-level defaults and configures the root
+// Cobra command tree. Sets platform-specific config / log directory
+// paths (including legacy Wiretrustee fallbacks) and a default daemon
+// address; registers persistent CLI flags (daemon address,
+// management / admin URLs, logging, setup key (file and inline,
+// mutually exclusive), preshared key, hostname, anonymise, config
+// path); attaches top-level and nested subcommands to the root
+// command; and registers `up`-specific persistent flags (external IP
+// maps, custom DNS resolver address, Rosenpass options, auto-connect
+// disabling, lazy connection).
 func init() {
 	defaultConfigPathDir = "/etc/netbird/"
 	defaultLogFileDir = "/var/log/netbird/"
@@ -141,7 +155,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&preSharedKey, preSharedKeyFlag, "", "Sets WireGuard PreSharedKey property. If set, then only peers that have the same key can communicate.")
 	rootCmd.PersistentFlags().StringVarP(&hostName, "hostname", "n", "", "Sets a custom hostname for the device")
 	rootCmd.PersistentFlags().BoolVarP(&anonymizeFlag, "anonymize", "A", false, "anonymize IP addresses and non-netbird.io domains in logs and status output")
-	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", defaultConfigPath, "Overrides the default profile file location")
+	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", profilemanager.DefaultConfigPath, "Overrides the default profile file location")
 
 	rootCmd.AddCommand(upCmd)
 	rootCmd.AddCommand(downCmd)
@@ -166,6 +180,12 @@ func init() {
 	logCmd.AddCommand(logLevelCmd)
 	debugCmd.AddCommand(forCmd)
 	debugCmd.AddCommand(persistenceCmd)
+	debugCmd.AddCommand(debugConfigCmd)
+
+	// kubernetes commands
+	rootCmd.AddCommand(kubernetesCmd)
+	kubernetesCmd.AddCommand(kubernetesListCmd)
+	kubernetesCmd.AddCommand(kubernetesWriteKubeconfigCmd)
 
 	// profile commands
 	profileCmd.AddCommand(profileListCmd)
